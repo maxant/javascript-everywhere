@@ -4,7 +4,7 @@ An example of writing an algorithm once (in Javascript) and executing it
 in a Javascript environment on the client in the browser, and executing it 
 in a Java environment on the server.
 
-See http://blog.maxant.co.uk/pebble/2015/07/17/1437163920000.html for more details.
+See http://blog.maxant.co.uk/pebble/2015/07/17/1437166259386.html for more details.
 
 ##License
 
