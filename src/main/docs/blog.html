@@ -1,0 +1,314 @@
+<html>
+<head>
+    <script src="run_prettify.js"></script>
+</head>
+<body>
+    
+<h2>
+Running the same Javascript code on both the client- and the server-side.
+</h2>
+Ant Kutschera, 201507
+<br/>
+<br/>
+I can think of at least two scenarios when you might need to run the same algorithms in both a Javascript and a Java environment.
+<ul>
+    <li>A Javascript client is running in offline mode and needs to run some business logic or complex validation which the server will need to run again later
+        when say the model is persisted and the server needs to verify the consistent valid state of the model,</li>
+    <li>You have several clients which need access to the same algorithms, for example a Javascript based single page application running in the browser and 
+        web service which your business partners use which is deployed in a Java EE application server.</li>
+</ul>
+You could build the algorithm twice: once in Java and once in Javascript but that isn't very friendly in terms of maintenance. 
+You could build it once in just Java and make the client call the server to run the algorithm, but 
+that doesn't work in an offline application like you can build using HTML 5 and AngularJS, and it doesn't make for a very responsive client.
+<br/>
+<br/>
+So why not build the algorithm just once, using Javascript, and then use the 
+<a href='http://docs.oracle.com/javase/8/docs/api/javax/script/package-summary.html' target='_blank'><code>javax.script</code></a> 
+Java package which first shipped with Java SE 7 and was improved 
+with Java SE 8, in order to execute the algorithm when you need to use it from Java?
+That is precisely what I asked myself, and so I set about building an example of how to do it.
+<br/>
+<br/>
+The first thing I considered was deployment and how the browser could access the Javascript.  I didn't want anything with complex build processes which for example 
+copy code maintained in a Node.js environment into a repo like Nexus.  Rather I wanted to just
+drop the Javascript into a Java source folder and be able to use it from there.  By having Javascript in a source folder of a Java project, 
+it is automatically deployed inside a web archive so I built a little Servlet capable of serving the Javascript to a client over HTTP.  Listing 1 shows the Servlet. 
+<div>
+<pre class="prettyprint linenums">
+@WebServlet("/ScriptLoader.js")
+public class ScriptLoader extends HttpServlet {
+
+  protected void doGet(HttpServletRequest request, HttpServletResponse ...
+
+    String script = request.getParameter("script");
+
+    response.setContentType("text/javascript");
+
+    Classloader cl = this.getClass().getClassLoader();
+    try (InputStream is = cl.getResourceAsStream(script)) {
+      int curr = -1;
+      while ((curr = is.read()) != -1) {
+        response.getOutputStream().write(curr);
+      }
+    }
+  }
+}
+</pre>
+</div>
+<b><small>Listing 1: A Servlet capable of reading Javascript deployed in a WAR</small></b><br/>
+<br/>
+Using the Servlet, you can load the Javascript into the browser, using normal HTML:
+<br/>
+<br/>
+&nbsp;&nbsp;&nbsp;&nbsp;<code>&lt;script type="text/javascript" src="ScriptLoader.js?script=rules.js"&gt;</script></code>
+<br/>
+<br/>
+Let's take a look at the Javascript algorithm in Listing 2.
+<div>
+<pre class="prettyprint linenums">
+;
+(function() {
+    var _global = this;
+
+    ///////////////////////////////////////////
+    // some javascript that we want to be able
+    // to run on the server, but also on the
+    // client
+    ///////////////////////////////////////////
+    function rule419(input) {
+        return _(input)
+        .filter(function(e){ 
+            return e.name === "John"; 
+        })
+        .value().length == 1 ? "OK" : "Scam";
+    };
+
+    ///////////////////////////////////////////
+    //create and assemble object for exporting
+    ///////////////////////////////////////////
+    var maxant = {};
+    maxant.rule419 = rule419;
+
+    ///////////////////////////////////////////
+    //export module depending upon environment
+    ///////////////////////////////////////////
+    if (typeof (module) != 'undefined' && module.exports) {
+        // Publish as node.js module
+        module.exports = maxant;
+    } else if (typeof define === 'function' && define.amd) {
+        // Publish as AMD module
+        define(function() {
+            return maxant;
+        });
+    } else {
+        // Publish as global (in browsers and rhino/nashorn)
+        var _previousRoot = _global.maxant;
+
+        // **`noConflict()` - (browser only) to reset global 'maxant' var**
+        maxant.noConflict = function() {
+            _global.maxant = _previousRoot;
+            return maxant;
+        };
+
+        _global.maxant = maxant;
+    }
+}).call(this);
+</pre>
+</div>
+<b><small>Listing 2: An example of an algorithm that we want to run in both Java and Javascript environments</small></b><br/>
+<br/>
+Lines 10-16 are the algorithm that we want to run. The rest of the script is standard Javascript boiler plate when you want to create a script that can be run in 
+all kinds of environments, for example, the browser, Rhino/Nashorn, require (e.g. Node.js) or AMD.  Lines 27-35 and lines 39-43 aren't really necessary in the context 
+of this article because we only run the code in the browser or Rhino/Nashorn, and we don't really care about being kind enough to provide a function for making our 
+script non-conflicting if some other script is loaded with the same "namspace" (in this case 'maxant').
+The algorithm itself, <code>rule419</code> isn't really that interesting, but notice how it makes use of
+<a href='https://lodash.com/' target='_blank'>lodash</a> when it wraps the input by calling the function <code>_(...)</code>.  That shows that we are able to make use 
+of other modules loaded into the global space who use script patterns similar
+to that shown in Listing 2. For demo purposes, I have created an algorithm which simply counts the number of times that 'John' is present in the model. The model is an array
+of objects with the <code>name</code> attribute.  In reality, if we are going to go to the extent of writing an algorithm in just Javascript but making it possible to run 
+it both in Java and Javascript environments, I hope that it would be a damn site more complicated that the algorithm shown here :-)
+<br/>
+<br/>
+To make the algorithm useful, I have chosen to run it from a mini-
+<a href='https://angularjs.org/'>AngularJS</a> application.  If you aren't familiar with AngularJS then all you need to know is that you can now 
+call <code>rule419</code> from Javascript like this:
+<br/>
+<br/>
+&nbsp;&nbsp;&nbsp;&nbsp;<code>var result = maxant.rule419(model);</code>
+<br/>
+<br/>
+In AngularJS it is recommended to make modules injectable, which can easily be done as shown in Listing 3, when bootstrapping the application. See 
+<a href='http://stackoverflow.com/questions/23862119/how-to-make-lodash-work-with-angular-js' target='_blank'>here for more details</a>.
+<div>
+<pre class="prettyprint linenums">
+'use strict';
+
+// Declare app level module which depends on views, and components
+angular.module('app', [
+  'ngRoute',
+  'app.view1'
+])...
+
+//make rules injectable
+.factory('maxant', function(){return window.maxant;})
+...
+</pre>
+</div>
+<b><small>Listing 3: app.js - Making rules injectable in AngularJS</small></b><br/>
+<br/>
+The AngularJS controller can then inject the module as shown in Listing 4.
+<div>
+<pre class="prettyprint linenums">
+...
+.controller('View1Ctrl', ['$scope', '$http', '$routeParams', 'maxant',
+  function($scope, $http, $routeParams, maxant) {
+
+    //create a model
+    var model = [
+                 {name: 'Ant'}, 
+                 {name: 'John'}
+                ];
+...    
+    //execute javascript that can also be executed on the server using Java
+    $scope.clientResult = maxant.rule419(model);    
+...
+}]);
+</pre>
+</div>
+<b><small>Listing 4: Controller code making use of the injected module in order to run the algorithm in question</small></b><br/>
+<br/>
+Lines 2-3 inject the module named <code>maxant</code> and line 12 then uses the <code>rule419</code> function and puts the result into scope so that it can be displayed 
+to the user.
+<br/>
+<br/>
+The harder part of this exercise is getting the Javascript to be runnable in a Java environment like a Java EE application server or a batch program.
+<a href='http://docs.oracle.com/javase/7/docs/technotes/guides/scripting/programmer_guide/' target='_blank'>This Java 7 link</a>
+and 
+<a href='http://www.oracle.com/technetwork/articles/java/jf14-nashorn-2126515.html' target='_blank'>this Java 8 link</a>
+give examples of how to run Javascript from Java.
+I've encapsulated code from those examples to provide a very simple API which Java application code can use to run the Javascript.
+<div>
+<pre class="prettyprint linenums">
+//instantiate the engine
+Engine engine = new Engine(Arrays.asList("lodash-3.10.0.js", "rules.js"));
+
+//prepare data model - the input to the javascript
+Person[] people = new Person[]{new Person("John"), new Person("John")};
+
+//invoke engine
+String result = engine.invoke(people, "maxant", "rule419");
+
+//evaluate output
+assertEquals("Scam", result);
+</pre>
+</div>
+<b><small>Listing 5: Calling the Javascript algorithm from Java</small></b><br/>
+<br/>
+Listing 5 starts on line 2 by instantiating the abstraction that I have created (see Listing 6).  It simply needs a list of Javascript file names which it should 
+load into the scripting engines' space.  The two Javascript files used in this example live in the <code>src/main/java</code> folder so that Maven packs them into the JAR/WAR
+that is built.  That makes them accessible via the Classloader as shown in Listings 1 and 6.  Listing 5 then continues on line 5 by 
+creating some kind of data model which is the input to the algorithm.  The <code>Person</code> class has an attribute named <code>name</code> which is private, but 
+nonetheless used by the algorithm.  In Java we would use getter/setter methods to access that data, but notice line 13 of Listing 2 just references the attribute by its name
+and not by a bean-style accessor method. 
+Line 8 of Listing 5 then executes the algorithm, by telling the engine to invoke <code>rule419</code> of the <code>maxant</code> module, using <code>people</code>
+as the input.  The result of the Javascript execution which happens under the hood can then be used, for example on line 11.  It doesn't have to be a <code>String</code>,
+it could also be a Java object which the rule returns.
+<br/>
+<br/>
+The implementation behind that simple API is shown in Listings 6, 7 and 8.  That code can be thought of as library code.
+<div>
+<pre class="prettyprint linenums">
+public Engine(List&lt;String&gt; javascriptFilesToLoad) {
+  ScriptEngineManager engineManager = new ScriptEngineManager();
+  engine = engineManager.getEngineByName("nashorn");
+  if (engine == null) {
+      //java 7 fallback
+      engine = engineManager.getEngineByName("JavaScript");
+  }
+
+  //preload all scripts and dependencies given by the caller
+  for (String js : javascriptFilesToLoad) {
+      load(engine, js);
+  }
+
+  referenceToJavascriptJSONInstance = engine.eval("JSON");
+}
+</pre>
+</div>
+<b><small>Listing 6: The implementation behind the neat API, part 1</small></b><br/>
+<br/>
+Listing 6 shows the constructor which first instantiates a <code>ScriptEngineManager</code> and uses it to create the real Javascript <code>Engine</code>
+which executes the algorithm in question, <code>rule419</code>.  Notice the fallback used for making the code compatible with Java 7 and 8.  I didn't try it but probably
+just getting the engine by the name "JavaScript" suffices...  The constructor does two more things: it loads all the scripts which the caller wants in scope and then gets itself
+a reference to the Javascript 
+<a href='https://developer.mozilla.org/en/docs/Web/JavaScript/Reference/Global_Objects/JSON' target='_blank'><code>JSON</code></a> 
+object which is used later for converting JSON to Javascript objects.
+
+
+<div>
+<pre class="prettyprint linenums">
+private void load(ScriptEngine engine, String scriptName) {
+  //fetch script file from classloader (e.g. out of a JAR) 
+  //and put it into the engine
+  ClassLoader cl = this.getClass().getClassLoader();
+  try (InputStream script = cl.getResourceAsStream(scriptName)) {
+      engine.eval(new InputStreamReader(script));
+  }
+}
+</pre>
+</div>
+<b><small>Listing 7: The implementation behind the neat API, part 2</small></b><br/>
+<br/>
+Listing 7 is called from Listing 6 and shows how the Javascript files are loaded using the Classloader and then sent to the <code>ScriptEngine</code> on line 5. 
+Finally, Listing 8 shows the process of invoking the Javascript.  
+<div>
+<pre class="prettyprint linenums">
+public &lt;T&gt; T invoke(Object input, String module, String functionNameToExecute) {
+
+  final Invocable invocable = (Invocable) engine;
+
+  //convert
+  ObjectMapper om = new ObjectMapper();
+  String dataString = om.writeValueAsString(input);
+  Object data = invocable.invokeMethod(referenceToJavascriptJSONInstance, 
+                                       "parse", dataString);
+
+  //execute
+  Object moduleRef = engine.get(module);
+  Object result = invocable.invokeMethod(moduleRef, functionNameToExecute, data);
+  return (T) result;
+}
+</pre>
+</div>
+<b><small>Listing 8: The implementation behind the neat API, part 3</small></b><br/>
+<br/>
+First, lines 6-7 use 
+<a href='https://github.com/FasterXML/jackson' target='_blank'>Jackson</a>
+to convert the Java model into a JSON string. That JSON string is then parsed inside the <code>ScriptEngine</code>
+on line 8, which is equivalent to calling <code>JSON.parse(dataString)</code>.  The conversion from Java to JSON and then 
+Javascript isn't strictly necessary since Rhino/Nashorn know how to use Java objects.
+But I've chosen to do it that way so that you can skip wrapping all the attributes in accessor code like <code>getXYZ(...)</code>.
+This way, the Javascript can simply access fields like this: <code>input[2].name</code> which gets the third elements attribute called <code>name</code>,
+rather than say <code>input.get(2).getName()</code>, like you would have to do in plain old Java.
+<br/>
+<br/>
+There is one thing to note: as far as I can tell, Rhino and Nashorn are not thread-safe, so any implementation that you write needs to think about that. I would probably
+use a pool of <code>Engine</code> objects, each pre-loaded with the necessary scripts, because it is the instantiation and setup that takes the longest amount of time.
+<br/>
+<br/>
+So, to conclude, it is indeed possible to write algorithms once and run them in both Javascript and Java environments, but unlike Java and its "write once, run anywhere"
+slogan, the algorithms are written in Javascript.
+<br/>
+<br/>
+Copyright &copy;2015, Ant Kutschera
+</body>
+</html>
+
+
+<hr>
+------------------------------------------------------------------------------
+
+
+TODO touch all files and reset git
+TODO apache license
+TODO upload to github

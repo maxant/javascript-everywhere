@@ -1,0 +1,8 @@
+<jboss-deployment-structure>
+	<deployment>
+		<dependencies>
+		      <!-- so that the engine can access jackson, i.e. put jackson on our classpath -->
+			<module name="org.codehaus.jackson.jackson-mapper-asl" />
+		</dependencies>
+	</deployment>
+</jboss-deployment-structure>
